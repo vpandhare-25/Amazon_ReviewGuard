@@ -1,89 +1,132 @@
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
-from sklearn.feature_selection import SelectFromModel
-from xgboost import plot_importance
+"""Step 3: tune hyperparameters and study feature importance.
+
+1. Feature importance of the baseline model (saved as a CSV and a chart).
+2. Grid search: 768 hyperparameter combinations x 5-fold cross-validation on the
+   training set (3,840 fits), scored by ROC-AUC. The test set is never used to choose.
+3. The best model is scored once on the held-out test set and compared to the baseline.
+4. Feature selection check: retrain with only the features above an importance
+   threshold and see whether the test score holds.
+
+Run train_model.py first. Writes model/tuned_classifier.pkl, model/tuning_results.json,
+model/feature_importance.csv and model/feature_importance.png.
+Full grid search takes a while (about 15-30 minutes on a laptop); use --quick for a
+small grid that checks the script runs.
+"""
+
+import json
+import sys
+import time
 from pathlib import Path
-from matplotlib import pyplot
+
 import joblib
-import numpy as np
-import pandas as pd
-from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
+import matplotlib
 
-model_dir = Path("./model")
-baseline_model_path = model_dir / "review_classifier.pkl"
-model = joblib.load(baseline_model_path)
-label_map = {"OR": 1, "CG": 0}
+matplotlib.use("Agg")  # save charts to files instead of opening windows
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
+from sklearn.feature_selection import SelectFromModel  # noqa: E402
+from sklearn.model_selection import GridSearchCV  # noqa: E402
+from xgboost import XGBClassifier  # noqa: E402
 
-df = pd.read_csv("processed-dataset.csv")
-X = pd.get_dummies(df.drop(columns=["label", "text_", "cleaned_text"]), columns=["category"]) # Prepare features (X) by removing text columns and the label column
-y = df["label"].map(label_map)
-importances = model.feature_importances_
-feature_importance_df = pd.DataFrame({'feature': X.columns,'importance': importances}).sort_values('importance', ascending=False)
+from train_model import evaluate, load_features, split  # noqa: E402
 
-print(feature_importance_df)
-plot_importance(model)
-pyplot.show()
+ROOT = Path(__file__).resolve().parent
+MODEL_DIR = ROOT / "model"
 
-
-
-
-parameters = {"n_estimators": [50, 100, 200, 500],"learning_rate": [0.1, 0.3, 0.6, 1.0],"max_depth": [3, 6, 10],"reg_alpha": [0.0, 0.1, 0.5, 1.0],"reg_lambda": [0.1, 0.5, 1.0, 1.5]}
-
-xgb_model = XGBClassifier(use_label_encoder=False,eval_metric="logloss",random_state=42)
-grid_search = GridSearchCV(estimator=xgb_model,param_grid=parameters,scoring="roc_auc",cv=5,n_jobs=-1,verbose=1,return_train_score=True)
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, random_state= 42, test_size = 0.2)
-grid_search.fit(X_train, y_train)
+FULL_GRID = {
+    "n_estimators": [50, 100, 200, 500],
+    "learning_rate": [0.1, 0.3, 0.6, 1.0],
+    "max_depth": [3, 6, 10],
+    "reg_alpha": [0.0, 0.1, 0.5, 1.0],
+    "reg_lambda": [0.1, 0.5, 1.0, 1.5],
+}  # 4 * 4 * 3 * 4 * 4 = 768 combinations
+QUICK_GRID = {"n_estimators": [100], "learning_rate": [0.1, 0.3], "max_depth": [3, 4]}
 
 
-best_params = best_params = { "learning_rate": 0.3,"max_depth": 3,"n_estimators": 500,"reg_alpha": 0.5,   "reg_lambda": 1.0}
-best_model = grid_search.best_estimator_
-best_score = grid_search.best_score_
+def save_feature_importance(model, columns):
+    importance = pd.DataFrame({"feature": columns, "importance": model.feature_importances_})
+    importance = importance.sort_values("importance", ascending=False)
+    importance.to_csv(MODEL_DIR / "feature_importance.csv", index=False)
 
-print("\n" + "=" * 50)
-print("GRID SEARCH RESULTS")
-print("=" * 50)
-print(f"Best parameters: {best_params}")
-print(f"Best cross-validation AUC score: {best_score:.4f}")
-print("=" * 50)
-
-
-best_pred = best_model.predict(X_test)
-best_prob = best_model.predict_proba(X_test)[:, 1]
-
-print("\nBest Model Performance on Test Set:")
-print("Classification Report:\n", classification_report(y_test, best_pred))
-print("Confusion Matrix:\n", confusion_matrix(y_test, best_pred))
-print(f"Test AUC Score: {roc_auc_score(y_test, best_prob):.4f}")
-
-baseline_pred = model.predict(X_test)
-baseline_prob = model.predict_proba(X_test)[:, 1]
-print("\n" + "=" * 50)
-print("BASELINE vs BEST MODEL COMPARISON")
-print("=" * 50)
-print(f"Baseline AUC: {roc_auc_score(y_test, baseline_prob):.4f}")
-print(f"Best Model AUC: {roc_auc_score(y_test, best_prob):.4f}")
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ordered = importance.iloc[::-1]  # biggest at the top of a horizontal bar chart
+    ax.barh(ordered["feature"], ordered["importance"], color="#2a78d6")
+    ax.set_xlabel("XGBoost feature importance (gain share)")
+    ax.set_title("Which features the baseline model relies on")
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(MODEL_DIR / "feature_importance.png", dpi=150)
+    plt.close(fig)
+    return importance
 
 
+if __name__ == "__main__":
+    quick = "--quick" in sys.argv
+    grid = QUICK_GRID if quick else FULL_GRID
 
-thresh = 0.020           # Only keep features with importance >= 0.020
-selection = SelectFromModel(model, threshold=thresh, prefit=True)
-select_X_train = selection.transform(X_train)
-model = XGBClassifier(**best_params,n_estimators=100, max_depth=4, use_label_encoder=False, eval_metric="logloss", random_state=42)
-model.fit(select_X_train, y_train)
-y_pred = model.predict(select_X_train)
-y_prob = model.predict_proba(select_X_train)[:,1]
+    X, y = load_features()
+    X_train, X_test, y_train, y_test = split(X, y)
+    baseline = joblib.load(MODEL_DIR / "review_classifier.pkl")
+    baseline_metrics = evaluate(baseline, X_test, y_test)
 
-# Print detailed classification report
-print("Classification Report:")
-print(classification_report(y_test, y_pred))
+    # ---- 1. Feature importance ----
+    importance = save_feature_importance(baseline, X.columns)
+    print("Feature importance (baseline):")
+    print(importance.to_string(index=False))
 
-# Print confusion matrix
-print("\nConfusion Matrix:")
-print(confusion_matrix(y_test, y_pred))
+    # ---- 2. Grid search on the training set only ----
+    search = GridSearchCV(
+        XGBClassifier(eval_metric="logloss", random_state=42),
+        param_grid=grid,
+        scoring="roc_auc",
+        cv=5,
+        n_jobs=-1,
+        verbose=1,
+    )
+    start = time.time()
+    search.fit(X_train, y_train)
+    minutes = (time.time() - start) / 60
+    n_combinations = len(search.cv_results_["params"])
+    print(f"\nGrid search: {n_combinations} combinations x 5 folds in {minutes:.1f} min")
+    print(f"Best parameters: {search.best_params_}")
+    print(f"Best cross-validation ROC-AUC: {search.best_score_:.4f}")
 
-# Calculate and print AUC score
-auc_score = roc_auc_score(y_test, y_prob)
-print(f"\nAUC Score: {auc_score:.4f}")
+    # ---- 3. Score the best model once on the test set ----
+    tuned = search.best_estimator_
+    tuned_metrics = evaluate(tuned, X_test, y_test)
+    print("\nTest set, baseline vs tuned:")
+    print(f"  baseline  accuracy {baseline_metrics['accuracy']:.4f}  ROC-AUC {baseline_metrics['roc_auc']:.4f}")
+    print(f"  tuned     accuracy {tuned_metrics['accuracy']:.4f}  ROC-AUC {tuned_metrics['roc_auc']:.4f}")
+    print(tuned_metrics["report"])
 
+    # ---- 4. Feature selection: keep features with importance >= 0.02 ----
+    selector = SelectFromModel(baseline, threshold=0.02, prefit=True)
+    kept = X.columns[selector.get_support()].tolist()
+    selected = XGBClassifier(**search.best_params_, eval_metric="logloss", random_state=42)
+    selected.fit(X_train[kept], y_train)
+    selected_metrics = evaluate(selected, X_test[kept], y_test)
+    print(f"\nWith only the {len(kept)} features above 0.02 importance: "
+          f"accuracy {selected_metrics['accuracy']:.4f}  ROC-AUC {selected_metrics['roc_auc']:.4f}")
+
+    if not quick:
+        joblib.dump(tuned, MODEL_DIR / "tuned_classifier.pkl")
+    results = {
+        "grid": "quick" if quick else "full",
+        "combinations": n_combinations,
+        "cv_folds": 5,
+        "search_minutes": round(minutes, 1),
+        "best_params": search.best_params_,
+        "best_cv_roc_auc": float(search.best_score_),
+        "baseline_test": {k: baseline_metrics[k] for k in ("accuracy", "roc_auc")},
+        "tuned_test": {k: tuned_metrics[k] for k in ("accuracy", "roc_auc", "confusion_matrix")},
+        "feature_selection": {
+            "threshold": 0.02,
+            "features_kept": kept,
+            "test": {k: selected_metrics[k] for k in ("accuracy", "roc_auc")},
+        },
+    }
+    out = MODEL_DIR / ("tuning_results_quick.json" if quick else "tuning_results.json")
+    with open(out, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved {out}")
