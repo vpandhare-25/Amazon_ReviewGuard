@@ -1,12 +1,12 @@
-streamlit
-seaborn
-spacy
-python-dotenv
-ipykernel
-nltk
-scikit-learn
-xgboost
-transformers
-datasets
-torch
-accelerate>=0.26.0
+# Python 3.9+
+pandas==2.3.3
+numpy==2.0.2
+scikit-learn==1.6.1
+xgboost==2.1.4
+joblib==1.5.2
+spacy==3.8.7
+matplotlib==3.9.4
+seaborn==0.13.2
+pytest==8.4.2
+# spaCy English model (needed for part-of-speech features):
+#   python -m spacy download en_core_web_sm
