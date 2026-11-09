@@ -1,0 +1,57 @@
+{
+  "grid": "full",
+  "combinations": 768,
+  "cv_folds": 5,
+  "search_minutes": 20.3,
+  "best_params": {
+    "learning_rate": 0.3,
+    "max_depth": 3,
+    "n_estimators": 500,
+    "reg_alpha": 0.5,
+    "reg_lambda": 1.0
+  },
+  "best_cv_roc_auc": 0.8557354837644834,
+  "baseline_test": {
+    "accuracy": 0.7547403132728772,
+    "roc_auc": 0.8379062281089346
+  },
+  "tuned_test": {
+    "accuracy": 0.7618851332783732,
+    "roc_auc": 0.8459610448288982,
+    "confusion_matrix": [
+      [
+        2873,
+        836
+      ],
+      [
+        897,
+        2672
+      ]
+    ]
+  },
+  "feature_selection": {
+    "threshold": 0.02,
+    "features_kept": [
+      "rating",
+      "char_length",
+      "word_count",
+      "punctuation_ct",
+      "is_extreme_star",
+      "VERB",
+      "ADV",
+      "NOUN",
+      "category_Books_5",
+      "category_Clothing_Shoes_and_Jewelry_5",
+      "category_Home_and_Kitchen_5",
+      "category_Kindle_Store_5",
+      "category_Movies_and_TV_5",
+      "category_Pet_Supplies_5",
+      "category_Sports_and_Outdoors_5",
+      "category_Toys_and_Games_5"
+    ],
+    "test": {
+      "accuracy": 0.7620225336630942,
+      "roc_auc": 0.8466121913022181
+    }
+  }
+}

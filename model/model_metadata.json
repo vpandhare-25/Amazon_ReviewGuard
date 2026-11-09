@@ -1,5 +1,16 @@
 {
+  "test_accuracy": 0.7547403132728772,
   "test_auc_score": 0.8379062281089346,
+  "confusion_matrix": [
+    [
+      2844,
+      865
+    ],
+    [
+      920,
+      2649
+    ]
+  ],
   "num_features": 18,
   "label_mapping": {
     "OR": 1,
